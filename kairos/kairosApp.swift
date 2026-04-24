@@ -1,32 +1,32 @@
+////
+////  kairosApp.swift
+////  kairos
+////
+////  Created by Isabel Abonitalla on 4/19/26.
+////
 //
-//  kairosApp.swift
-//  kairos
+//import SwiftUI
+//import SwiftData
 //
-//  Created by Isabel Abonitalla on 4/19/26.
+//@main
+//struct kairosApp: App {
+//    var sharedModelContainer: ModelContainer = {
+//        let schema = Schema([
+//            Item.self,
+//        ])
+//        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 //
-
-import SwiftUI
-import SwiftData
-
-@main
-struct kairosApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-        .modelContainer(sharedModelContainer)
-    }
-}
+//        do {
+//            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+//        } catch {
+//            fatalError("Could not create ModelContainer: \(error)")
+//        }
+//    }()
+//
+//    : some Scene {
+//        WindowGroup {
+//            ContentView()
+//        }
+//        .modelContainer(sharedModelContainer)
+//    }
+//}
