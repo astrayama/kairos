@@ -164,33 +164,38 @@ struct MetricStats {
     let max: Double; let maxEntry: CheckIn
     let stdDev: Double
     let trendDirection: Double   // positive = improving, negative = declining
+    let firstThirdAvg: Double
+    let lastThirdAvg: Double
     let count: Int
 
     var trendObservation: String {
         let name = metric.rawValue.lowercased()
-        let volatility = stdDev
-        let swing = abs(max - min)
-
         var parts: [String] = []
 
+        let fmtFirst = String(format: "%.1f", firstThirdAvg)
+        let fmtLast  = String(format: "%.1f", lastThirdAvg)
+        let fmtAvg   = String(format: "%.1f", avg)
+
         // Trend
-        if trendDirection > 0.8 {
-            parts.append("Your \(name) has been noticeably improving.")
-        } else if trendDirection > 0.3 {
-            parts.append("Your \(name) has been slightly improving.")
-        } else if trendDirection < -0.8 {
-            parts.append("Your \(name) has been declining.")
-        } else if trendDirection < -0.3 {
-            parts.append("Your \(name) has dipped toward the end of this period.")
+        if trendDirection > 1.5 {
+            parts.append("Your \(name) has been climbing noticeably — from around \(fmtFirst) to \(fmtLast) over this period.")
+        } else if trendDirection > 0.5 {
+            parts.append("Your \(name) has been gently improving lately.")
+        } else if trendDirection < -1.5 {
+            parts.append("Your \(name) has been lower toward the end of this period — from around \(fmtFirst) to \(fmtLast). That's worth noticing.")
+        } else if trendDirection < -0.5 {
+            parts.append("Your \(name) has dipped a little toward the end of this period.")
         } else {
-            parts.append("Your \(name) has stayed fairly stable.")
+            parts.append("Your \(name) has been fairly steady around \(fmtAvg).")
         }
 
         // Volatility
-        if swing > 6 || volatility > 2.5 {
-            parts.append("It fluctuated a lot.")
-        } else if swing < 2 && volatility < 0.8 {
-            parts.append("Very steady overall.")
+        if stdDev > 2.5 {
+            parts.append("It's been quite variable — your \(name) shifted a lot day to day.")
+        } else if stdDev > 1.5 {
+            parts.append("There's been some variability here.")
+        } else if stdDev < 0.7 {
+            parts.append("Very consistent.")
         }
 
         return parts.joined(separator: " ")
@@ -213,17 +218,22 @@ struct MetricStats {
 
         // Trend: compare first-third avg to last-third avg
         var trendDirection: Double = 0
+        var firstThirdAvg: Double = avg
+        var lastThirdAvg: Double = avg
+        
         if pairs.count >= 3 {
             let chunk = Swift.max(1, pairs.count / 3)
-            let firstAvg = pairs.prefix(chunk).map(\.0).reduce(0, +) / Double(chunk)
-            let lastAvg  = pairs.suffix(chunk).map(\.0).reduce(0, +) / Double(chunk)
-            trendDirection = lastAvg - firstAvg
+            firstThirdAvg = pairs.prefix(chunk).map(\.0).reduce(0, +) / Double(chunk)
+            lastThirdAvg  = pairs.suffix(chunk).map(\.0).reduce(0, +) / Double(chunk)
+            trendDirection = lastThirdAvg - firstThirdAvg
         }
 
         return MetricStats(metric: metric, avg: avg,
                            min: minP.0, minEntry: minP.1,
                            max: maxP.0, maxEntry: maxP.1,
-                           stdDev: stdDev, trendDirection: trendDirection, count: pairs.count)
+                           stdDev: stdDev, trendDirection: trendDirection,
+                           firstThirdAvg: firstThirdAvg, lastThirdAvg: lastThirdAvg,
+                           count: pairs.count)
     }
 }
 
@@ -276,20 +286,25 @@ struct Analytics {
             let avgYwhenXhi = highX.reduce(0, +) / Double(highX.count)
             let avgYwhenXlo = lowX.reduce(0,  +) / Double(lowX.count)
             let diff = avgYwhenXhi - avgYwhenXlo
-
             let absDiff = abs(diff)
+            
+            guard absDiff >= 0.8 else { continue }
+            
+            let fmtHi = String(format: "%.1f", avgYwhenXhi)
+            let fmtLo = String(format: "%.1f", avgYwhenXlo)
             var text: String
-            if absDiff < 0.5 {
-                text = "No strong pattern between \(na) and \(nb) in this period."
+            
+            if diff > 0 {
+                text = "Higher \(na) tends to go hand-in-hand with higher \(nb) (\(fmtHi) vs \(fmtLo) on average)."
+            } else if absDiff >= 2.0 {
+                text = "Interestingly, when your \(na) is high, your \(nb) tends to be lower (\(fmtHi) vs \(fmtLo))."
             } else {
-                let dir  = diff > 0 ? "higher" : "lower"
-                let size = absDiff >= 2.0 ? "significantly" : (absDiff >= 1.0 ? "noticeably" : "slightly")
-                text = "When your \(na) is high, your \(nb) tends to be \(size) \(dir) (\(String(format: "%.1f", avgYwhenXhi)) vs \(String(format: "%.1f", avgYwhenXlo)))."
+                text = "When your \(na) is higher, your \(nb) is often slightly lower (\(fmtHi) vs \(fmtLo))."
             }
             results.append(CorrelationObservation(text: text, strength: absDiff))
         }
 
-        return results.sorted { $0.strength > $1.strength }
+        return Array(results.sorted { $0.strength > $1.strength }.prefix(3))
     }
 
     // MARK: Tag frequency
@@ -320,16 +335,32 @@ struct Analytics {
         var diff: Double { avgWith - avgWithout }
 
         var observation: String {
-            let dir  = diff > 0 ? "higher" : "lower"
-            let mag  = abs(diff)
-            let size = mag >= 2 ? "significantly" : (mag >= 1 ? "noticeably" : "slightly")
-            let prefix: String
+            let mag = abs(diff)
+            let size = mag >= 2.0 ? "notably" : (mag >= 1.0 ? "a bit" : "slightly")
+            let name = metric.rawValue.lowercased()
+            let fmtWith = String(format: "%.1f", avgWith)
+            let fmtWithout = String(format: "%.1f", avgWithout)
+            
             switch filterType {
-            case .activity(let t): prefix = "Tagging \"\(t)\""
-            case .location(let l): prefix = "Being at \"\(l)\""
-            case .hashtag(let t):  prefix = "Logging #\(t)"
+            case .activity(let t):
+                if diff > 0 {
+                    return "When you're \(t), your \(name) tends to be \(size) higher (\(fmtWith) vs \(fmtWithout) on other days)."
+                } else {
+                    return "When you're \(t), your \(name) tends to run \(size) lower (\(fmtWith) vs \(fmtWithout) on other days)."
+                }
+            case .location(let l):
+                if diff > 0 {
+                    return "At \(l), your \(name) tends to be \(size) higher (\(fmtWith) vs \(fmtWithout) elsewhere)."
+                } else {
+                    return "At \(l), your \(name) tends to run \(size) lower (\(fmtWith) vs \(fmtWithout) elsewhere)."
+                }
+            case .hashtag(let t):
+                if diff > 0 {
+                    return "On days you write #\(t), your \(name) is \(size) higher (\(fmtWith) vs \(fmtWithout) on other days)."
+                } else {
+                    return "On days you write #\(t), your \(name) tends to be \(size) lower (\(fmtWith) vs \(fmtWithout) on other days)."
+                }
             }
-            return "\(prefix) is associated with \(size) \(dir) \(metric.rawValue.lowercased()) (\(String(format: "%.1f", avgWith)) vs \(String(format: "%.1f", avgWithout)) baseline)."
         }
     }
 
@@ -376,10 +407,19 @@ struct Analytics {
         var observation: String {
             let diff = value - recentAvg
             let name = metric.rawValue.lowercased()
-            if abs(diff) < 0.5 { return "Your \(name) is right around your recent average." }
-            let dir = diff > 0 ? "above" : "below"
-            let mag = abs(diff) >= 2 ? "well" : "slightly"
-            return "This \(name) is \(mag) \(dir) your recent average (\(String(format: "%.1f", recentAvg)))."
+            let fmtAvg = String(format: "%.1f", recentAvg)
+            
+            if diff > 2.0 {
+                return "Your \(name) is looking really good right now — noticeably above your recent average of \(fmtAvg)."
+            } else if diff > 0.5 {
+                return "Your \(name) is a little above your recent average (\(fmtAvg))."
+            } else if diff < -2.0 {
+                return "Your \(name) is lower than usual for you (your recent average is \(fmtAvg)). That's okay — you logged it, and that matters."
+            } else if diff < -0.5 {
+                return "Your \(name) is slightly below your recent average (\(fmtAvg))."
+            } else {
+                return "Your \(name) is right in line with how you've been lately (\(fmtAvg))."
+            }
         }
     }
 
